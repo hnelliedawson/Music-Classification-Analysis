@@ -1,0 +1,406 @@
+---
+title: "Final Project - Taylor Swift"
+author: "Helen Nellie Dawson"
+date: "2023-10-12"
+output: html_document
+---
+
+```{r setup and libraries, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyr)
+library(lattice) #splom
+library(ggplot2) #ggpairs
+library(GGally)  #ggpairs
+library(stats)
+library(MVN)  #mvn
+library(dplyr)
+library(ICSNP)   #Hotellings
+library(MASS)
+library(class) #KNN
+library(tree) #tree
+library(randomForest) #randomForest
+# library( ) 
+
+library(boot)
+```
+
+
+### Raw and Selected Data 
+
+```{r taylor data}
+#Raw Data
+RawData <- read.csv("taylor_swift_spotify.csv")
+
+#New Variable
+RawData$Taylor_Owned <- 1*(RawData$release_date > 2018)   
+RawData$Taylor_Owned = as.factor(RawData$Taylor_Owned)
+```
+
+```{r}
+UnownedAlbums <- filter(RawData, album %in% c("Taylor Swift", "Live From Clear Channel Stripped 2008", "Fearless (Platinum Edition)" , "Speak Now (Deluxe Package)", "Speak Now World Tour Live", "Red (Deluxe Edition)" , "1989 (Deluxe)", "reputation"))
+
+OwnedAlbums  <- filter(RawData, album %in% c("Lover", "folklore (deluxe version)","folklore: the long pond studio sessions (from the Disney+ special) [deluxe edition]", "evermore (deluxe version)", "Fearless (Taylor's Version)" , "Red (Taylor's Version)", "Speak Now (Taylor's Version)", "Midnights (The Til Dawn Edition)"))
+
+SelectAlbums <- rbind(OwnedAlbums, UnownedAlbums)
+```
+
+
+
+``` {r}
+#Selected Variables
+SelectData <- SelectAlbums[,8:19]
+Index <- SelectAlbums[,1]
+
+#Combine Columns and Remove Popularity
+SelectData <- cbind(Index,SelectData)
+
+names(SelectData)
+```
+
+The variables we will using to test classification to Taylor_Owned are acousticness, danceability, energy, instrumentalness, liveness, loudness, speechiness, tempo, valence, and duration. 
+
+
+
+``` {r}
+Summaries <- sapply(SelectData[,2:12], summary)
+Summaries
+```
+Acousticness and Instrumentalness have means somewhat different than their medians. 
+Other variables have mean and median values close in range, even duration when we thought All Too Well would be an outlier
+
+
+
+### Covariance and Correlation Matrices
+
+```{r covariance and correlation }
+
+
+Own <- subset(SelectData, Taylor_Owned == 1)
+Unown <- subset(SelectData, Taylor_Owned == 0)
+
+#Combined
+Covariance <- round(cov(SelectData[,2:12]),5) 
+Covariance
+
+#Owned
+CovarianceOwned <- round(cov(Own[,2:12]),5) 
+CovarianceOwned
+
+#Unowned
+CovarianceUnowned <- round(cov(Unown[,2:12]),5) 
+CovarianceUnowned
+
+``` 
+
+Loudness, Tempo, and Duration have the most variance. 
+Aside from duration, other variables seem to have somewhat similar trends despite some slight changes in magnitude. 
+
+
+
+
+``` {r}
+Correlation <- round(cor(SelectData[,2:12]) ,5)
+Correlation
+
+Correlation <- round(cor(Own[,2:12]) ,5)
+Correlation
+
+Correlation <- round(cor(Unown[,2:12]) ,5)
+Correlation
+```
+
+Acousticness and Energy seem to be have a large correlation value which indicates these values may have a large effect on eachother. Acousticness and Loudness also follow this pattern.  When you think of music, this seems to make sense!  An acoustic guitar sound will potentially be slower and 
+
+
+Similar trends when comparing groupings 
+
+
+
+## Graphical Data Summaries
+
+```{r ggpairs}
+#Using ggpairs to create scatter plot correlation matrices colored by Taylor Owned 
+ggpairs(SelectData[,2:12], aes(color = SelectData$Taylor_Owned), upper = list(continuous = wrap("cor", size=2)))
+```
+
+RED: UNOWNED (Pre 2018)
+
+BLUE: OWNED (Post 2018)
+
+
+DISTRIBTIONS:
+Acousticness shows an interesting trend within and when comparing groupings -  Almost bimodal in the recent grouping
+Instrumentalness, Liveness, Speechiness seem to have heavy left skew (Consider transformations?)
+
+SPLOM: Some distinction between colors (energy, loudness, acousticness)
+
+
+CORRELATIONS:  
+
+
+``` {r}
+SelectData <- SelectData[ ,!names(SelectData) %in% c("speechiness","liveness","instrumentalness","popularity","duration_ms")]
+names(SelectData)
+```
+
+
+``` {r}
+ggpairs(SelectData[,2:7], aes(color = SelectData$Taylor_Owned), upper = list(continuous = wrap("cor", size=4)))
+```
+
+## Checking Normality 
+
+``` {r}
+#Graphical Multivariate Normality
+#OLD / Combined: mvn(SelectData[,2:10], mvnTest = "mardia", univariatePlot="histogram", multivariatePlot = "qq", multivariateOutlierMethod = "adj", showOutliers = TRUE)
+
+
+
+mvn(SelectData[,2:7], mvnTest = "mardia", multivariateOutlierMethod = "adj")
+
+```
+
+
+
+``` {r mvn}
+#Multivariate Normality
+by(SelectData[,2:7], SelectData$Taylor_Owned, mvn)
+```
+
+
+
+``` {r hotellings}
+#Hotellings  - Independent Samples 
+
+
+Own <- subset(SelectData, Taylor_Owned == 1)
+Unown <- subset(SelectData, Taylor_Owned == 0)
+
+
+HotellingsT2(Own[,2:7], Unown[,2:7])
+```
+Hotellings indicates that these two groups have at least one set of unequal means among the predictors. 
+
+
+
+### Train/Test Sets 
+
+``` {r  train/test}
+set.seed(5)
+n <- length(SelectAlbums$Taylor_Owned)
+train <- sample(n,round(n*0.8,0))
+test <- setdiff(c(1:n),train)
+
+```
+
+
+
+
+
+##### Parametric Plots -  These will have less stability or accuracy because our data is does not pass the tests of being multivariate normal. 
+
+``` {r lda}
+set.seed(10)
+lda.fit <- lda(Taylor_Owned~.-Index, data = SelectData, subset = train)
+lda.fit
+plot(lda.fit)
+```
+
+Group 0 (Unowned) seem to follow more normal distribution here than Group 1 (Owned)
+
+``` {r lda error}
+lda.pred <- predict(lda.fit, SelectData[test,])
+lda.class <- lda.pred$class
+table(lda.class, SelectData$Taylor_Owned[test])
+mean(lda.class != SelectData$Taylor_Owned[test])
+```
+Error for LDA _____
+
+``` {r qda }
+qda.fit <- qda(Taylor_Owned~ .-Index, data = SelectData, subset = train)
+qda.fit
+qda.pred <- predict(qda.fit, SelectData[test,])
+qda.class <- qda.pred$class
+```
+
+
+``` {r qda error}
+mean(qda.class != SelectData$Taylor_Owned[test])
+```
+
+Error for QDA 30.5%  This is not an improvement from QDA. 
+
+
+#### Non Parametric Methods  -  KNN - These make less assumptions on the data 
+
+``` {r knn} 
+SelectData.2 <- SelectData[,-1]
+train.X <- SelectData.2[train,]
+test.X <- SelectData.2[test,]
+
+set.seed(20)
+knn.pred1 <- knn(train.X, test.X, SelectData$Taylor_Owned[train], k = 1) 
+table(knn.pred1, SelectData$Taylor_Owned[test])
+mean(knn.pred1 != SelectData$Taylor_Owned[test])
+
+knn.pred2 <- knn(train.X, test.X, SelectData$Taylor_Owned[train], k = 3) 
+table(knn.pred2, SelectData$Taylor_Owned[test])
+mean(knn.pred2 != SelectData$Taylor_Owned[test])
+
+knn.pred3 <- knn(train.X, test.X, SelectData$Taylor_Owned[train], k = 5) 
+table(knn.pred3, SelectData$Taylor_Owned[test])
+mean(knn.pred3 != SelectData$Taylor_Owned[test])
+
+knn.pred7 <- knn(train.X, test.X, SelectData$Taylor_Owned[train], k = 7) 
+table(knn.pred7, SelectData$Taylor_Owned[test])
+mean(knn.pred7 != SelectData$Taylor_Owned[test])
+
+knn.pred10 <- knn(train.X, test.X, SelectData$Taylor_Owned[train], k = 10) 
+table(knn.pred10, SelectData$Taylor_Owned[test])
+mean(knn.pred10 != SelectData$Taylor_Owned[test])
+
+
+``` 
+
+KNN K=5 Error 
+KNN K=3 Error 
+KNN K=1 Error    
+
+
+#### CROSS VALIDATION LDA, QDA, KNN
+
+
+``` {r}
+
+set.seed(34)
+n <- length(SelectData$Taylor_Owned)
+lda.cv.error.5 <- rep(0,5)
+qda.cv.error.5 <- rep(0,5)
+knn.cv.error.5 <- rep(0,5)
+n.test <- round(length(SelectData$Taylor_Owned)/5)
+
+for (i in 1:5){
+  # ordered test sequence
+  cvtest <- seq((i-1)*n.test+1,min(i*n.test,n))
+  #ordered train sequence
+  cvtrain <- setdiff(c(1:n),cvtest)
+  
+  # LDA
+  lda.fit.cv <- lda(Taylor_Owned~ .-Index, data = SelectData, subset = cvtrain)
+  lda.pred.cv <- predict(lda.fit.cv, SelectData[cvtest,])
+  lda.class.cv <- lda.pred.cv$class
+  lda.cv.error.5[i] <- mean(lda.class.cv != SelectData$Taylor_Owned[cvtest])
+  
+  #QDA
+  qda.fit.cv <- qda(Taylor_Owned~ .-Index, data = SelectData, subset = cvtrain)
+  qda.pred.cv <- predict(qda.fit.cv, SelectData[cvtest,])
+  qda.class.cv <- qda.pred.cv$class
+  qda.cv.error.5[i] <- mean(qda.class.cv != SelectData$Taylor_Owned[cvtest])
+  
+  #KNN
+  SelectData.2 <- SelectData[,-1]
+  train.X <- SelectData.2[train,]
+  test.X <- SelectData.2[test,]
+  knn.pred <- knn(train.X, test.X, SelectData$Taylor_Owned[train], k = 3) 
+  knn.cv.error.5[i]<- mean(knn.pred!=SelectData$Taylor_Owned[test])
+}
+
+lda.cv.error.5 
+mean(lda.cv.error.5)
+qda.cv.error.5
+mean(qda.cv.error.5)
+knn.cv.error.5
+mean(knn.cv.error.5)
+
+```
+PARAMETRIC:
+LDA Error Rate with 5-Fold Cross Validation 50.3%   -  much less stable method because we don't fit assumptions
+QDA Error Rate with 5-Fold Cross Validation 44.6%
+
+NONPARAMETRIC:
+KNN Error Rate with 5-Fold Cross Validation 38.7%
+
+
+### LOGISTIC - PARAMTRIC
+
+``` {r logistic}
+glm.auto <- glm(Taylor_Owned ~ .-Index, data = SelectData, subset = train, family = binomial)
+
+summary(glm.auto)
+
+
+glm.probs <- predict(glm.auto, SelectData[test,], type = "response")
+head(glm.probs)
+
+glm.pred <- rep("0", nrow(SelectData[test,]))
+glm.pred[glm.probs > 0.5] <- "1"
+
+table(glm.pred, SelectData$Taylor_Owned[test])
+
+lr.test.error <- mean(glm.pred != SelectData$Taylor_Owned[test])
+lr.test.error
+```
+
+PARAMETRIC 
+Logistic Regression Test Error 
+
+
+
+
+``` {r tree}
+tree.taylor <- tree(Taylor_Owned ~ .-Index,SelectData[train,])
+
+#Summary
+summary(tree.taylor)
+
+#Plot
+plot(tree.taylor)
+text(tree.taylor,pretty=0)
+
+```
+
+
+NODES:
+
+
+
+```{r pruning }
+# FUN=prune.misclass
+set.seed(121)
+cv.taylor <- cv.tree(tree.taylor, FUN = prune.misclass)
+
+par(mfrow=c(1,2))
+plot(cv.taylor)
+plot(cv.taylor$size,cv.taylor$dev,type="b")
+``` 
+
+
+```{r pruned tree}
+prune.taylor <- prune.tree(tree.taylor,best=11)
+
+plot(prune.taylor)
+text(prune.taylor,pretty=0)
+
+tree.pred <- predict(prune.taylor,SelectData[test,],type="class")
+table(tree.pred,SelectData$Taylor_Owned[test])
+
+#Error 
+mean (tree.pred!= SelectData$Taylor_Owned[test])
+``` 
+
+NODES:
+
+
+
+``` {r random forest}
+set.seed(131)
+rf.taylor <- randomForest(Taylor_Owned ~ .-Index,data= SelectData, subset= train, mtry= 7, ntree = 5000)
+rf.pred <- predict(rf.taylor,SelectData[test,],type="class")
+table(rf.pred,SelectData$Taylor_Owned[test])
+
+#Error 
+mean (rf.pred!= SelectData$Taylor_Owned[test])
+```
+
+ERROR RATE: 
